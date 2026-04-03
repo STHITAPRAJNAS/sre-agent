@@ -76,14 +76,10 @@ async def get_flink_job_checkpoints(job_id: str) -> dict:
     Returns:
         dict with counts (restored, total, in_progress, completed, failed),
         summary (duration, state_size), latest checkpoint details, and
-        history (list of recent checkpoints with trigger_timestamp, status,
-        end_to_end_duration, state_size, failure reason).
+        history of recent checkpoints with status and failure reason.
     """
     async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{_base_url()}/jobs/{job_id}/checkpoints",
-            timeout=10,
-        )
+        resp = await client.get(f"{_base_url()}/jobs/{job_id}/checkpoints", timeout=10)
         resp.raise_for_status()
         return resp.json()
 
@@ -114,8 +110,8 @@ async def list_flink_taskmanagers() -> dict:
     """List all TaskManagers connected to the Flink cluster.
 
     Returns:
-        dict with 'taskmanagers' list containing id, path, dataPort,
-        jmxPort, timeSinceLastHeartbeat, slotsNumber, freeSlots, hardware.
+        dict with 'taskmanagers' list: id, path, dataPort,
+        timeSinceLastHeartbeat, slotsNumber, freeSlots.
     """
     async with httpx.AsyncClient() as client:
         resp = await client.get(f"{_base_url()}/taskmanagers", timeout=10)
@@ -124,14 +120,13 @@ async def list_flink_taskmanagers() -> dict:
 
 
 async def get_flink_taskmanager_logs(taskmanager_id: str) -> dict:
-    """Get recent log entries for a specific Flink TaskManager.
+    """Get available log files for a specific Flink TaskManager.
 
     Args:
         taskmanager_id: TaskManager ID string.
 
     Returns:
-        dict with 'logs' list of {name, size} (available log files) and
-        'taskmanager_id'.
+        dict with 'taskmanager_id' and 'logs' list of {name, size}.
     """
     async with httpx.AsyncClient() as client:
         resp = await client.get(

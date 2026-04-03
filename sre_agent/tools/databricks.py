@@ -25,14 +25,14 @@ async def list_databricks_job_runs(
     """List recent Databricks job runs.
 
     Args:
-        job_id: Optional job ID to filter. If omitted, all jobs are returned.
+        job_id: Optional job ID filter. If omitted, all jobs are included.
         limit: Max number of runs (default 25, max 100).
         active_only: Return only active/running jobs.
         completed_only: Return only completed jobs.
 
     Returns:
-        dict with 'runs' list of {run_id, job_id, run_name, state,
-        start_time, end_time, run_duration, error_message}.
+        dict with 'runs' list of {run_id, job_id, run_name, life_cycle_state,
+        result_state, state_message, start_time_ms, run_duration_ms}.
     """
     params: dict = {"limit": min(limit, 100)}
     if job_id is not None:
@@ -50,24 +50,22 @@ async def list_databricks_job_runs(
     runs = []
     for r in data.get("runs", []):
         state = r.get("state", {})
-        runs.append(
-            {
-                "run_id": r.get("run_id"),
-                "job_id": r.get("job_id"),
-                "run_name": r.get("run_name", ""),
-                "life_cycle_state": state.get("life_cycle_state"),
-                "result_state": state.get("result_state"),
-                "state_message": state.get("state_message", ""),
-                "start_time_ms": r.get("start_time"),
-                "end_time_ms": r.get("end_time"),
-                "run_duration_ms": r.get("run_duration"),
-            }
-        )
+        runs.append({
+            "run_id": r.get("run_id"),
+            "job_id": r.get("job_id"),
+            "run_name": r.get("run_name", ""),
+            "life_cycle_state": state.get("life_cycle_state"),
+            "result_state": state.get("result_state"),
+            "state_message": state.get("state_message", ""),
+            "start_time_ms": r.get("start_time"),
+            "end_time_ms": r.get("end_time"),
+            "run_duration_ms": r.get("run_duration"),
+        })
     return {"runs": runs, "has_more": data.get("has_more", False)}
 
 
 async def get_databricks_run_output(run_id: int) -> dict:
-    """Get the full output, logs URL, and error for a completed Databricks run.
+    """Get the full output, error, and metadata for a completed Databricks run.
 
     Args:
         run_id: Databricks run ID.
@@ -91,7 +89,7 @@ async def get_databricks_cluster_info(cluster_id: str) -> dict:
     Returns:
         dict with cluster_id, cluster_name, state, state_message,
         spark_version, node_type_id, autoscale, num_workers,
-        last_restarted_time, last_activity_time.
+        last_restarted_time, cluster_memory_mb, cluster_cores.
     """
     async with _client() as client:
         resp = await client.get("/api/2.0/clusters/get", params={"cluster_id": cluster_id})
@@ -108,7 +106,6 @@ async def get_databricks_cluster_info(cluster_id: str) -> dict:
         "autoscale": data.get("autoscale"),
         "num_workers": data.get("num_workers"),
         "last_restarted_time": data.get("last_restarted_time"),
-        "last_activity_time": data.get("last_activity_time"),
         "cluster_memory_mb": data.get("cluster_memory_mb"),
         "cluster_cores": data.get("cluster_cores"),
     }
@@ -142,14 +139,15 @@ async def list_databricks_clusters() -> dict:
 
 
 async def search_databricks_failed_runs(lookback_minutes: int = 60) -> dict:
-    """Find all failed Databricks job runs in the last N minutes across all jobs.
+    """Find all failed Databricks job runs across all jobs in the last N minutes.
 
     Args:
-        lookback_minutes: How far back to look (default 60 minutes).
+        lookback_minutes: Lookback window in minutes (default 60).
 
     Returns:
         dict with 'failed_runs' list of {run_id, job_id, run_name,
-        result_state, state_message, start_time_ms, run_duration_ms}.
+        result_state, state_message, start_time_ms, run_duration_ms}
+        and 'count'.
     """
     cutoff_ms = int((time.time() - lookback_minutes * 60) * 1000)
 
@@ -161,24 +159,18 @@ async def search_databricks_failed_runs(lookback_minutes: int = 60) -> dict:
         resp.raise_for_status()
         data = resp.json()
 
-    failed = []
-    for r in data.get("runs", []):
-        state = r.get("state", {})
-        start_time = r.get("start_time", 0)
-        if (
-            state.get("result_state") in ("FAILED", "TIMEDOUT", "CANCELED")
-            and start_time >= cutoff_ms
-        ):
-            failed.append(
-                {
-                    "run_id": r.get("run_id"),
-                    "job_id": r.get("job_id"),
-                    "run_name": r.get("run_name", ""),
-                    "result_state": state.get("result_state"),
-                    "state_message": state.get("state_message", ""),
-                    "start_time_ms": start_time,
-                    "run_duration_ms": r.get("run_duration"),
-                }
-            )
-
+    failed = [
+        {
+            "run_id": r.get("run_id"),
+            "job_id": r.get("job_id"),
+            "run_name": r.get("run_name", ""),
+            "result_state": r.get("state", {}).get("result_state"),
+            "state_message": r.get("state", {}).get("state_message", ""),
+            "start_time_ms": r.get("start_time"),
+            "run_duration_ms": r.get("run_duration"),
+        }
+        for r in data.get("runs", [])
+        if r.get("state", {}).get("result_state") in ("FAILED", "TIMEDOUT", "CANCELED")
+        and r.get("start_time", 0) >= cutoff_ms
+    ]
     return {"failed_runs": failed, "count": len(failed), "lookback_minutes": lookback_minutes}
