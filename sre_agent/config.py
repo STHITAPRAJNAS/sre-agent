@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     # LLM
     anthropic_api_key: str = ""
 
-    # Embeddings (OpenAI text-embedding-3-small by default)
+    # Embeddings — OpenAI text-embedding-3-small (1536 dims) via LiteLLM
     openai_api_key: str = ""
     embedding_model: str = "text-embedding-3-small"
     embedding_dimension: int = 1536
@@ -49,25 +49,27 @@ class Settings(BaseSettings):
     # Code Agent (A2A)
     code_agent_a2a_url: str = "http://code-agent:8080"
 
-    # PostgreSQL — sessions + pgvector memory + runbooks + service catalog + dedup
+    # PostgreSQL — ADK sessions + pgvector memory + runbooks + service catalog + dedup
+    # Use postgresql+asyncpg:// prefix for SQLAlchemy (DatabaseSessionService)
     database_url: str = "postgresql+asyncpg://sre:sre@localhost:5432/sre_agent"
-    # Raw asyncpg DSN (without SQLAlchemy driver prefix, used by asyncpg directly)
+
     @property
     def asyncpg_url(self) -> str:
+        """Raw asyncpg DSN (no SQLAlchemy driver prefix) for direct asyncpg usage."""
         return self.database_url.replace("postgresql+asyncpg://", "postgresql://")
 
-    # OpenTelemetry
+    # OpenTelemetry — export to Datadog Agent or OTEL Collector on port 4317
     otlp_endpoint: str = "http://localhost:4317"
     otel_enabled: bool = False
 
-    # Alert deduplication
+    # Alert deduplication — suppress re-investigation within this window
     alert_dedup_ttl_minutes: int = 15
 
     # Proactive health check scheduler
     health_check_interval_minutes: int = 5
     health_check_enabled: bool = True
 
-    # Webhook HMAC secret (optional)
+    # Webhook HMAC signature verification (optional, set to enable)
     webhook_secret: str = ""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}

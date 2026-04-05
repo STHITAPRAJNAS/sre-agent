@@ -20,7 +20,12 @@ _runner: Runner | None = None
 
 
 def _get_runner() -> Runner:
-    """Lazy-initialise the ADK Runner with DatabaseSessionService and PgVectorMemoryService."""
+    """Lazy-initialise the ADK Runner with DatabaseSessionService + PgVectorMemoryService.
+
+    DatabaseSessionService persists all sessions (and session state / app-level KV pairs)
+    to PostgreSQL via SQLAlchemy. PgVectorMemoryService stores RCA summaries as
+    vector embeddings for semantic search in future incident investigations.
+    """
     global _session_service, _memory_service, _runner
     if _runner is None:
         s = get_settings()
@@ -32,17 +37,20 @@ def _get_runner() -> Runner:
             memory_service=_memory_service,
             app_name="sre_agent",
         )
-        logger.info("ADK Runner initialised with DatabaseSessionService + PgVectorMemoryService")
+        logger.info(
+            "ADK Runner initialised with DatabaseSessionService + PgVectorMemoryService"
+        )
     return _runner
 
 
 async def invoke_sre_agent(alert: NormalizedAlert) -> None:
     """Invoke the SRE agent with a normalized alert.
 
-    Creates a new persisted session per alert, streams all ADK events
-    (tool calls, sub-agent transfers, LLM responses) with structured logging
-    and OpenTelemetry spans. The completed session is automatically stored
-    in pgvector memory by the Runner for future incident correlation.
+    - Creates a PostgreSQL-persisted session with alert metadata pre-seeded into
+      session state (accessible to all sub-agents via ADK state).
+    - Streams all ADK events with structured logging + OpenTelemetry spans.
+    - After the run, the Runner automatically calls memory_service.add_session_to_memory()
+      so the RCA is stored in pgvector for future semantic search.
 
     Args:
         alert: Normalized alert to investigate.
@@ -56,10 +64,11 @@ async def invoke_sre_agent(alert: NormalizedAlert) -> None:
         span.set_attribute("alert.source", alert.source.value)
         span.set_attribute("alert.title", alert.title)
 
+        # Seed session state so sub-agents can access alert metadata without re-parsing JSON.
+        # ADK DatabaseSessionService persists this as a KV store per session.
         session = await runner.session_service.create_session(
             app_name="sre_agent",
             user_id="webhook",
-            # Seed session state with alert metadata for memory extraction
             state={
                 "alert_id": alert.alert_id,
                 "alert_title": alert.title,
@@ -67,6 +76,7 @@ async def invoke_sre_agent(alert: NormalizedAlert) -> None:
                 "source": alert.source.value,
                 "affected_job_name": alert.affected_job_name or "",
                 "affected_service": alert.affected_service or "",
+                "affected_namespace": alert.affected_namespace or "",
             },
         )
 
@@ -115,9 +125,8 @@ async def invoke_sre_agent(alert: NormalizedAlert) -> None:
 
 
 def _log_event(event: object, alert_id: str) -> None:
-    """Structured log each ADK event for observability."""
+    """Structured log every ADK event for full observability."""
     extra = {"alert_id": alert_id, "event_type": type(event).__name__}
-
     content = getattr(event, "content", None)
     if content:
         for part in getattr(content, "parts", []):
@@ -129,6 +138,5 @@ def _log_event(event: object, alert_id: str) -> None:
                 logger.info("Tool response: %s", part.function_response.name, extra=extra)
             elif getattr(part, "text", None) and len(part.text) > 20:
                 logger.debug("Agent text: %s", part.text[:300], extra=extra)
-
     if getattr(event, "is_final_response", lambda: False)():
         logger.info("Final RCA response received", extra=extra)

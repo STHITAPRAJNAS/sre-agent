@@ -19,7 +19,7 @@ _scheduler: AsyncIOScheduler | None = None
 
 
 async def _check_flink_health() -> list[NormalizedAlert]:
-    """Check for Flink jobs that have entered FAILED state since last check."""
+    """Check for Flink jobs that have entered FAILED state."""
     alerts: list[NormalizedAlert] = []
     try:
         result = await list_flink_jobs(status="FAILED")
@@ -52,7 +52,7 @@ async def _check_databricks_health() -> list[NormalizedAlert]:
     alerts: list[NormalizedAlert] = []
     s = get_settings()
     try:
-        lookback = s.health_check_interval_minutes + 2  # slight overlap to avoid gaps
+        lookback = s.health_check_interval_minutes + 2
         result = await search_databricks_failed_runs(lookback_minutes=lookback)
         for run in result.get("failed_runs", []):
             job_name = run.get("run_name", f"job-{run.get('job_id')}")
@@ -84,47 +84,40 @@ async def run_health_check() -> None:
 
     Called on a schedule (every N minutes). Checks Flink and Databricks for
     silent failures that may not have triggered Datadog/PagerDuty alerts.
-    Sends any detected issues to the SRE agent for investigation.
+    Sends any detected issues through the SRE agent for investigation.
     """
     logger.info("Running proactive platform health check")
 
-    # Import here to avoid circular imports at module load time
+    # Deferred imports to avoid circular dependency at module load time
     from sre_agent.dedup.dedup import is_duplicate
     from webhook.runner import invoke_sre_agent
 
-    flink_alerts, databricks_alerts = await asyncio.gather(
+    results = await asyncio.gather(
         _check_flink_health(),
         _check_databricks_health(),
         return_exceptions=True,
     )
 
     all_alerts: list[NormalizedAlert] = []
-    if isinstance(flink_alerts, list):
-        all_alerts.extend(flink_alerts)
-    if isinstance(databricks_alerts, list):
-        all_alerts.extend(databricks_alerts)
+    for r in results:
+        if isinstance(r, list):
+            all_alerts.extend(r)
 
     for alert in all_alerts:
-        # Deduplicate to avoid re-investigating the same failure every 5 minutes
         if await is_duplicate(alert):
             logger.debug("Proactive alert suppressed (duplicate): %s", alert.title)
             continue
-
         logger.info("Proactive alert dispatched: %s [%s]", alert.title, alert.severity)
         asyncio.create_task(invoke_sre_agent(alert))
 
     if not all_alerts:
-        logger.debug("Proactive health check: platform healthy — no issues found")
+        logger.debug("Proactive health check: platform healthy — no issues detected")
 
 
 def start_scheduler() -> AsyncIOScheduler:
-    """Start the APScheduler background scheduler for proactive health checks.
-
-    Returns the scheduler instance so it can be shut down cleanly on app exit.
-    """
+    """Start the APScheduler for proactive health checks. Returns the scheduler."""
     global _scheduler
     s = get_settings()
-
     _scheduler = AsyncIOScheduler()
     _scheduler.add_job(
         run_health_check,

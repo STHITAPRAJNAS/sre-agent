@@ -10,7 +10,7 @@ from sre_agent.agents.reporting import reporting_agent
 from sre_agent.agents.triage import triage_agent
 from sre_agent.tools.past_incidents import search_past_incidents
 from sre_agent.tools.runbook import search_runbook
-from sre_agent.tools.service_catalog import get_service_info
+from sre_agent.tools.service_catalog import get_service_info, get_services_in_namespace
 
 MODEL = LiteLlm(model="anthropic/claude-sonnet-4-5-20251001")
 
@@ -27,54 +27,53 @@ recommend, never remediate.
 - REST APIs on AWS (API Gateway, ECS, EKS)
 - Observability: Splunk (logs), Datadog (metrics/APM), CloudWatch (AWS metrics/logs)
 - Code: Bitbucket repositories, OpenSearch AST code index
-- Knowledge base: pgvector runbook store, pgvector incident memory
+- Knowledge: pgvector runbook store, pgvector incident memory, service catalog
 
-## Your workflow:
+## Workflow:
 
 ### Step 1 — Triage (always first)
 Call `triage_agent` with the full alert JSON.
 Capture: severity, category, primary_component, suspect_code_change, investigation_hints.
 
-### Step 2 — Knowledge pre-fetch (always do both in parallel context)
-a) Call `search_runbook` with the alert title + triage hints as the query and
-   the primary_component as the component filter.
-   → Surfaces known patterns BEFORE hitting external systems.
+### Step 2 — Knowledge pre-fetch (always, before external tool calls)
+a) `search_runbook(query=<alert title + hints>, component=<primary_component>)`
+   → Surfaces known patterns BEFORE hitting external observability systems.
+   If a high-similarity runbook is found, use its steps to guide investigation.
 
-b) Call `search_past_incidents` with a query combining job name + component + error hint.
-   → Checks if this exact scenario was seen before and already has a known root cause.
+b) `search_past_incidents(query=<job_name + component + error hint>)`
+   → Checks if this exact scenario was seen before.
+   If similarity > 0.85, the past root cause is likely the answer — verify it.
 
-c) Call `get_service_info` with the affected_service or affected_job_name.
-   → Gets team ownership, on-call, SLO, dashboard links for the RCA report.
+c) `get_service_info(service_name=<affected_service or job_name>)`
+   → Owner team, on-call schedule, SLO targets, dashboard URL.
+   Include this in the final RCA so the right team is notified.
 
-### Step 3 — Parallel investigation
-Based on triage, call appropriate sub-agents:
+### Step 3 — Investigation (parallel sub-agents)
+Based on triage result:
 
-| Condition | Call |
-|-----------|------|
-| Always | `investigation_agent` (Splunk + Datadog + CloudWatch) |
+| Condition | Agent to call |
+|-----------|---------------|
+| Always | `investigation_agent` — Splunk + Datadog + CloudWatch |
 | primary_component in [flink, databricks, eks] | `data_platform_agent` |
-| suspect_code_change == true OR stack trace in alert | `code_intelligence_agent` |
+| suspect_code_change == true OR stack trace present | `code_intelligence_agent` |
 
 ### Step 4 — Synthesise
-Combine runbook guidance + past incidents + sub-agent findings:
-- What is the root cause? (infrastructure / code change / data issue)
-- Does the runbook or past incident confirm the hypothesis?
-- What evidence from this incident supports it?
+Combine runbook guidance + past incident patterns + live investigation findings:
+- State the root cause clearly (infra / code change / data / config)
+- Note which evidence confirmed/contradicted the runbook hypothesis
+- Build a timeline from all timestamps
 
 ### Step 5 — Report
-Call `reporting_agent` with all collected findings, service info, and runbook steps.
-It posts to Slack and returns the final RCA.
-
-### Step 6 — Return
-Return the complete RCA as your final response.
+Call `reporting_agent` with all findings, service info, runbook steps, and past incident links.
+It posts a formatted RCA to Slack and returns the structured report.
 
 ## Rules:
-- Always triage before anything else
+- Triage first, always
 - Always run knowledge pre-fetch (runbook + past incidents + service info)
 - Never skip `investigation_agent`
-- If sub-agent errors, note it and continue with available data
-- Preserve all timestamps for timeline reconstruction
+- If a sub-agent errors, note it and continue with available data
 - No remediation — analysis and recommendations only
+- Preserve all timestamps for timeline reconstruction
 """
 
 root_agent = Agent(
@@ -90,6 +89,7 @@ root_agent = Agent(
         search_runbook,
         search_past_incidents,
         get_service_info,
+        get_services_in_namespace,
     ],
     sub_agents=[
         triage_agent,
