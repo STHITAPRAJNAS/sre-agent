@@ -9,17 +9,48 @@ description = "Multi-agent SRE system for bank data platform (Flink, Databricks,
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    # ADK + LLM
     "google-adk[litellm]>=1.0.0",
     "litellm>=1.30.0",
+
+    # Web server
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
+
+    # Config & validation
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
-    "boto3>=1.35.0",
-    "httpx>=0.27.0",
-    "slack-sdk>=3.30.0",
     "python-dotenv>=1.0.0",
+
+    # AWS
+    "boto3>=1.35.0",
+
+    # HTTP client
+    "httpx>=0.27.0",
+
+    # Slack
+    "slack-sdk>=3.30.0",
+
+    # PostgreSQL + pgvector (sessions, memory, runbooks, service catalog, dedup)
+    "asyncpg>=0.29.0",
+    "pgvector>=0.3.0",
+    "sqlalchemy[asyncio]>=2.0.0",
+    "alembic>=1.13.0",
+
+    # OpenSearch (AST code index)
     "opensearch-py>=2.7.0",
+
+    # Resilience
+    "tenacity>=8.2.0",
+
+    # Proactive scheduler
+    "apscheduler>=3.10.0",
+
+    # OpenTelemetry
+    "opentelemetry-sdk>=1.25.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.25.0",
+    "opentelemetry-instrumentation-fastapi>=0.46b0",
+    "opentelemetry-instrumentation-httpx>=0.46b0",
 ]
 
 [project.optional-dependencies]
